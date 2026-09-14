@@ -1,8 +1,13 @@
 // Serverless proxy for the Anthropic API.
-// The real API key lives only here, as a Vercel environment variable
-// (ANTHROPIC_API_KEY) — it is never sent to or visible from the browser.
+// The real API key lives only here, as a Vercel environment variable (ANTHROPIC_API_KEY).
 
-const ALLOWED_MODELS = new Set(["claude-sonnet-4-6"]);
+const ALLOWED_MODELS = new Set([
+  "claude-3-5-sonnet-20241022",
+  "claude-3-5-haiku-20241022",
+  "claude-3-haiku-20240307",
+  "claude-3-opus-20240229"
+]);
+
 const MAX_TOKENS_CAP = 2000;
 
 export default async function handler(req, res) {
@@ -19,11 +24,8 @@ export default async function handler(req, res) {
 
   const body = req.body || {};
 
-  if (!ALLOWED_MODELS.has(body.model)) {
-    res.status(400).json({ error: "Model not allowed" });
-    return;
-  }
-
+  // Default to 3.5 Sonnet if no model or an unlisted model is provided
+  const selectedModel = ALLOWED_MODELS.has(body.model) ? body.model : "claude-3-5-sonnet-20241022";
   const maxTokens = Math.min(Number(body.max_tokens) || 1000, MAX_TOKENS_CAP);
 
   if (!Array.isArray(body.messages) || body.messages.length === 0) {
@@ -40,7 +42,7 @@ export default async function handler(req, res) {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: body.model,
+        model: selectedModel,
         max_tokens: maxTokens,
         messages: body.messages,
       }),
