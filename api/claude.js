@@ -54,3 +54,14 @@ export default async function handler(req, res) {
     res.status(502).json({ error: "Upstream request failed" });
   }
 }
+export async function POST(req: Request) {
+  try {
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return new Response(JSON.stringify({ error: "Missing ANTHROPIC_API_KEY" }), { status: 500 });
+    }
+    // ... API call to Claude ...
+  } catch (error: any) {
+    console.error("Claude API Error:", error);
+    return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+  }
+}
