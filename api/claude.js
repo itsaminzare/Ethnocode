@@ -1,13 +1,14 @@
 // Serverless proxy for the Anthropic API.
-// The real API key lives only here, as a Vercel environment variable (ANTHROPIC_API_KEY).
+// The real API key lives only here, as a Vercel environment variable
+// (ANTHROPIC_API_KEY) — it is never sent to or visible from the browser.
+//
+// This also clamps a couple of request fields so a stray or malicious
+// request against this public endpoint can't run up an unbounded bill:
+// only the model this app actually uses is allowed, and max_tokens is
+// capped. This is NOT a substitute for setting a spend limit on your
+// Anthropic account — see the README for why.
 
-const ALLOWED_MODELS = new Set([
-  "claude-3-5-sonnet-20241022",
-  "claude-3-5-haiku-20241022",
-  "claude-3-haiku-20240307",
-  "claude-3-opus-20240229"
-]);
-
+const ALLOWED_MODELS = new Set(["claude-sonnet-4-6"]);
 const MAX_TOKENS_CAP = 2000;
 
 export default async function handler(req, res) {
@@ -18,14 +19,29 @@ export default async function handler(req, res) {
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    res.status(500).json({ error: "Server misconfigured: ANTHROPIC_API_KEY is not set" });
+    // Most common cause: the key is set in the Vercel dashboard for
+    // Production/Preview only, so it's missing when running `vercel dev`
+    // locally (which uses the Development environment). Fix by adding a
+    // local .env with ANTHROPIC_API_KEY=..., or by also enabling the
+    // "Development" environment for the variable in Vercel and running
+    // `vercel env pull .env.development.local`.
+    res.status(500).json({
+      error:
+        "Server misconfigured: ANTHROPIC_API_KEY is not set for this environment. " +
+        "If you're running `vercel dev`, add it to a local .env file (see .env.example) " +
+        "or enable the Development environment for this variable in Vercel and run " +
+        "`vercel env pull`.",
+    });
     return;
   }
 
   const body = req.body || {};
 
-  // Default to 3.5 Sonnet if no model or an unlisted model is provided
-  const selectedModel = ALLOWED_MODELS.has(body.model) ? body.model : "claude-3-5-sonnet-20241022";
+  if (!ALLOWED_MODELS.has(body.model)) {
+    res.status(400).json({ error: "Model not allowed" });
+    return;
+  }
+
   const maxTokens = Math.min(Number(body.max_tokens) || 1000, MAX_TOKENS_CAP);
 
   if (!Array.isArray(body.messages) || body.messages.length === 0) {
@@ -42,7 +58,7 @@ export default async function handler(req, res) {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: selectedModel,
+        model: body.model,
         max_tokens: maxTokens,
         messages: body.messages,
       }),
@@ -52,16 +68,5 @@ export default async function handler(req, res) {
     res.status(upstream.status).json(data);
   } catch (err) {
     res.status(502).json({ error: "Upstream request failed" });
-  }
-}
-export async function POST(req: Request) {
-  try {
-    if (!process.env.ANTHROPIC_API_KEY) {
-      return new Response(JSON.stringify({ error: "Missing ANTHROPIC_API_KEY" }), { status: 500 });
-    }
-    // ... API call to Claude ...
-  } catch (error: any) {
-    console.error("Claude API Error:", error);
-    return new Response(JSON.stringify({ error: error.message }), { status: 500 });
   }
 }
