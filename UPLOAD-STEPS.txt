@@ -1,0 +1,20 @@
+HOW TO PUT THE NEW SITE LIVE  (GitHub repo: itsaminzare/Ethnocode)
+
+1. GitHub: Add file -> Upload files.
+   Drag in these files from this folder (not the folder itself):
+     index.html  app.html  app.css  app.js
+     package.json  build.mjs  vercel.json
+     hero-1.mp4  hero-2.mp4  hero-3.mp4  hero-4.mp4
+     hero-1-m.mp4  hero-2-m.mp4  hero-3-m.mp4  hero-4-m.mp4   (smaller videos for phones)
+   Click "Commit changes". When GitHub asks, choose to replace existing files.
+
+2. GitHub: open the existing file api/claude.js -> pencil icon (Edit).
+   Select all, delete, then paste in everything from api/claude.js in this folder.
+   Click "Commit changes".
+   (If there is no api folder yet: Add file -> Create new file, type   api/claude.js   as the name, paste, commit.)
+
+3. Vercel redeploys by itself. Your ANTHROPIC_API_KEY is kept.
+   Wait until Deployments shows "Ready", then open the site and press Ctrl+Shift+R.
+
+Old files from the previous version (App.jsx, main.jsx, the src folder, vite.config.js)
+can stay. They are no longer used. You can delete them later to tidy up.
