@@ -1,6 +1,5 @@
 // Vercel serverless function: forwards requests from the workspace to the Claude API.
-// The API key stays on the server (Vercel environment variable ANTHROPIC_API_KEY)
-// and is never sent to the browser.
+// The API key stays on the server (Vercel environment variable ANTHROPIC_API_KEY).
 
 const ALLOWED_MODELS = new Set(["claude-sonnet-4-6"]);
 const MAX_TOKENS_CAP = 4000;
