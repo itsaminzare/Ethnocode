@@ -31,19 +31,21 @@ function toProjectUrl(value) {
 export default function handler(req, res) {
   const env = process.env;
   const supabaseUrl = (env.SUPABASE_URL || env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
-  const supabaseAnonKey = (
+  // Clean up what copy-paste tends to add: spaces, quotes, invisible characters, "Bearer ".
+  const clean = (v) => String(v || "").replace(/[\u200B-\u200D\uFEFF\s]/g, "").replace(/^["'`]+|["'`]+$/g, "").replace(/^Bearer/i, "");
+  const supabaseAnonKey = clean(
     env.SUPABASE_ANON_KEY ||
     env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
     env.SUPABASE_PUBLISHABLE_KEY ||
     env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
     ""
-  ).trim();
+  );
 
   res.setHeader("Cache-Control", "no-store");
 
   // Safe facts for troubleshooting the Vercel settings. Never includes a key's value.
   const keySource = ["SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_PUBLISHABLE_KEY", "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"].find((n) => (env[n] || "").trim());
-  const looksLike = (v) => !v ? "empty" : /^sb_publishable_/.test(v) ? "publishable key" : /^sb_secret_/.test(v) ? "secret key (not sent)" : /^eyJ/.test(v) ? "JWT key" : /^https?:\/\//i.test(v) ? "a web address" : /\.supabase\.(co|in)/i.test(v) ? "a supabase address" : "something else, " + v.length + " characters";
+  const looksLike = (v) => !v ? "empty" : /^sb_publishable_/.test(v) ? "publishable key" : /^sb_secret_/.test(v) ? "secret key (not sent)" : /^eyJ/.test(v) ? "JWT key" : /^https?:\/\//i.test(v) ? "a web address" : /\.supabase\.(co|in)/i.test(v) ? "a supabase address" : "something else: " + v.length + " characters starting with \"" + v.slice(0, 4) + "\"";
   const about = {
     readsKeyFrom: keySource || "none",
     keyLooksLike: looksLike(supabaseAnonKey),
