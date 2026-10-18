@@ -594,6 +594,34 @@
   /* ---------- accounts (Supabase) ---------- */
   var SUPABASE_JS = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js";
 
+  function displayName(u) {
+    var m = (u && u.user_metadata) || {};
+    return String(m.full_name || m.name || "").trim();
+  }
+
+  // Links in Supabase emails come back with a note in the address, such as
+  // "#message=Confirmation link accepted…" or "#error_description=Email link is invalid…".
+  function readEmailLinkNotice() {
+    var h = location.hash.replace(/^#/, "");
+    if (!h || !/(^|&)(message|error_description|type)=/.test(h)) return;
+    var p = {};
+    h.split("&").forEach(function (kv) { var i = kv.indexOf("="); if (i > 0) p[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1).replace(/\+/g, " ")); });
+    if (p.error_description) {
+      account.notice = /expired|invalid/i.test(p.error_description) ? "That email link has expired or was already used. Please try again." : p.error_description;
+    } else if (p.message) {
+      account.notice = /other email/i.test(p.message) ? "One link confirmed. Now click the link we sent to your other email address to finish changing it." : p.message;
+    } else if (p.type === "email_change") {
+      account.notice = "Your email address has been updated.";
+    }
+    if (!p.access_token && history.replaceState) history.replaceState(null, "", location.pathname + location.search);
+  }
+
+  function showNotice() {
+    if (!account.notice) return false;
+    toast(account.notice); account.notice = null;
+    return true;
+  }
+
   function sideFootText() {
     if (account.user) return "<span>Saved to your account as <b>" + esc(account.user.email || "") + "</b>. Text is sent to Claude only when you generate codes.</span>";
     if (account.enabled) return '<span>Notes are saved in this browser. <button type="button" class="link-btn" data-action="auth-open" data-mode="signup">Create a free account</button> to keep them across devices.</span>';
@@ -611,6 +639,7 @@
   }
 
   function initAccounts() {
+    readEmailLinkNotice();
     fetch("/api/config").then(function (r) { return r.ok ? r.json() : null; }).then(function (cfg) {
       if (cfg && cfg.problem && window.console) console.warn("EthnoCode accounts are off: " + cfg.problem);
       if (!cfg || !cfg.accounts) return;
@@ -639,7 +668,18 @@
     }
     if (user && (!account.user || account.user.id !== user.id)) onSignedIn(user);
     else if (!user && account.user) onSignedOut();
-    else renderAccount();
+    else {
+      if (user) {
+        // Same person, fresher details (new name, confirmed email change, and so on).
+        var oldEmail = account.user.email;
+        account.user = user;
+        if (oldEmail && user.email && oldEmail !== user.email && !account.notice) account.notice = "Your email address is now " + user.email + ".";
+        renderSidebar();
+        if (account.mode === "account" && !account.busy) renderAuth();
+      }
+      renderAccount();
+      if (user || event === "INITIAL_SESSION") showNotice();
+    }
   }
 
   function isUntouchedSample(n) {
@@ -682,7 +722,11 @@
       lastKey = null;
       render(); renderAccount();
       if (!remote || added || pushCache) { account.dirty = true; pushNow(); } else setStatus("synced");
+      // A password-reset link signs the person in: keep the new-password form open.
+      var choosingPassword = account.mode === "reset" && $("#authDialog") && $("#authDialog").open;
+      if (showNotice()) { if (!fromCache && !choosingPassword) closeAuth(); return; }
       if (fromCache) return;
+      if (choosingPassword) return;
       closeAuth();
       toast(added ? plural(added, "note", "notes") + " from this browser added to your account" : remote ? "Welcome back. Your work is loaded." : "Signed in. Your work is now saved to your account.");
     }).catch(function (e) {
@@ -743,7 +787,8 @@
     if (!account.enabled) { box.innerHTML = ""; return; }
     if (account.user) {
       var email = account.user.email || "";
-      box.innerHTML = '<button type="button" class="acct-btn" data-action="auth-open" data-mode="account" aria-label="Account: ' + esc(email) + '"><span class="avatar">' + esc((email[0] || "?").toUpperCase()) + '</span><span class="acct-email">' + esc(email) + "</span></button>";
+      var label = displayName(account.user) || email;
+      box.innerHTML = '<button type="button" class="acct-btn" data-action="auth-open" data-mode="account" aria-label="Account settings for ' + esc(label) + '"><span class="avatar">' + esc((label[0] || "?").toUpperCase()) + '</span><span class="acct-email">' + esc(label) + "</span></button>";
     } else {
       box.innerHTML = '<button type="button" class="btn btn-signin" data-action="auth-open" data-mode="signin">Sign in</button>';
     }
@@ -771,10 +816,40 @@
     var m = account.mode, html;
     var close = '<button type="button" class="auth-x" data-action="auth-close" aria-label="Close">' + ICON_X + "</button>";
     var busy = account.busy ? " disabled" : "";
+    var u = account.user || {};
+    var back = '<button type="button" class="auth-back" data-action="auth-mode" data-mode="account"><span aria-hidden="true">←</span> Account</button>';
+    var spin = account.busy ? '<span class="spinner" aria-hidden="true"></span>' : "";
     if (m === "account") {
+      var name = displayName(u);
       html = close + '<h2 id="auth-title">Your account</h2>' +
-        '<p class="auth-lead">Signed in as <b>' + esc(account.user ? account.user.email : "") + "</b>. Your notes and codebook are saved to your account and sync across your devices.</p>" +
+        '<p class="auth-lead">Your notes and codebook are saved to your account and sync across your devices.</p>' + authMessage() +
+        '<ul class="acct-rows">' +
+          '<li><div class="acct-row-text"><span class="acct-k">Name</span><span class="acct-v">' + (name ? esc(name) : '<i>Not added</i>') + "</span></div>" +
+            '<button type="button" class="btn btn-line btn-sm" data-action="auth-mode" data-mode="acct-name">' + (name ? "Edit" : "Add") + "</button></li>" +
+          '<li><div class="acct-row-text"><span class="acct-k">Email</span><span class="acct-v">' + esc(u.email || "") + "</span>" +
+            (u.new_email ? '<span class="acct-pending">Waiting for you to confirm ' + esc(u.new_email) + "</span>" : "") + "</div>" +
+            '<button type="button" class="btn btn-line btn-sm" data-action="auth-mode" data-mode="acct-email">Change</button></li>' +
+          '<li><div class="acct-row-text"><span class="acct-k">Password</span><span class="acct-v acct-dots" aria-label="Hidden">••••••••</span></div>' +
+            '<button type="button" class="btn btn-line btn-sm" data-action="auth-mode" data-mode="acct-password">Change</button></li>' +
+        "</ul>" +
         '<div class="auth-actions"><button type="button" class="btn btn-line" data-action="auth-close">Close</button><button type="button" class="btn btn-dark" data-action="sign-out">Sign out</button></div>';
+    } else if (m === "acct-name") {
+      html = close + back + '<h2 id="auth-title">Your name</h2><p class="auth-lead">Shown in the top bar instead of your email. Only you can see it.</p>' + authMessage() +
+        '<form data-auth="name"><label for="auth-name">Name</label><input id="auth-name" name="fullname" type="text" autocomplete="name" maxlength="80" value="' + esc(displayName(u)) + '">' +
+        '<p class="auth-hint">Leave it empty to show your email instead.</p>' +
+        '<button type="submit" class="btn btn-primary auth-submit"' + busy + ">" + spin + "Save name</button></form>";
+    } else if (m === "acct-email") {
+      html = close + back + '<h2 id="auth-title">Change your email</h2><p class="auth-lead">You sign in with <b>' + esc(u.email || "") + "</b>. We’ll send a confirmation link to the new address, and the change happens once you click it.</p>" + authMessage() +
+        '<form data-auth="email"><label for="auth-new-email">New email</label><input id="auth-new-email" name="newemail" type="email" autocomplete="email" required>' +
+        '<button type="submit" class="btn btn-primary auth-submit"' + busy + ">" + spin + "Send confirmation link</button></form>";
+    } else if (m === "acct-password") {
+      html = close + back + '<h2 id="auth-title">Change your password</h2>' + authMessage() +
+        '<form data-auth="password"><label for="auth-current">Current password</label><input id="auth-current" name="current" type="password" autocomplete="current-password" required>' +
+        '<label for="auth-password">New password</label><input id="auth-password" name="password" type="password" autocomplete="new-password" minlength="8" required>' +
+        '<label for="auth-confirm">Repeat new password</label><input id="auth-confirm" name="confirm" type="password" autocomplete="new-password" minlength="8" required>' +
+        '<p class="auth-hint">At least 8 characters.</p>' +
+        '<button type="submit" class="btn btn-primary auth-submit"' + busy + ">" + spin + "Change password</button></form>" +
+        '<p class="auth-switch">Forgot your current password? <button type="button" class="link-btn" data-action="acct-reset-link"' + busy + ">Email me a reset link</button></p>";
     } else if (m === "forgot") {
       html = close + '<h2 id="auth-title">Reset your password</h2><p class="auth-lead">Enter your email and we’ll send you a link to choose a new password.</p>' + authMessage() +
         '<form data-auth="forgot"><label for="auth-email">Email</label><input id="auth-email" name="email" type="email" autocomplete="email" required>' +
@@ -790,19 +865,31 @@
         '<p class="auth-lead">' + (up ? "Save your notes and codebook to your account and pick up where you left off on any device." : "Welcome back. Sign in to load your saved notes.") + "</p>" +
         '<div class="auth-tabs" role="tablist"><button type="button" role="tab" data-action="auth-mode" data-mode="signin" aria-selected="' + !up + '">Sign in</button><button type="button" role="tab" data-action="auth-mode" data-mode="signup" aria-selected="' + up + '">Create account</button></div>' +
         authMessage() +
-        '<form data-auth="' + m + '"><label for="auth-email">Email</label><input id="auth-email" name="email" type="email" autocomplete="email" required>' +
+        '<form data-auth="' + m + '">' +
+        (up ? '<label for="auth-name">Name <span class="auth-optional">(optional)</span></label><input id="auth-name" name="fullname" type="text" autocomplete="name" maxlength="80">' : "") +
+        '<label for="auth-email">Email</label><input id="auth-email" name="email" type="email" autocomplete="email" required>' +
         '<label for="auth-password">Password</label><input id="auth-password" name="password" type="password" autocomplete="' + (up ? "new-password" : "current-password") + '" minlength="' + (up ? 8 : 1) + '" required>' +
         (up ? '<p class="auth-hint">At least 8 characters.</p>' : '<p class="auth-hint"><button type="button" class="link-btn" data-action="auth-mode" data-mode="forgot">Forgot your password?</button></p>') +
         '<button type="submit" class="btn btn-primary auth-submit"' + busy + ">" + (account.busy ? '<span class="spinner" aria-hidden="true"></span>' : "") + (up ? "Create account" : "Sign in") + "</button></form>" +
         (up ? '<p class="auth-fine">Your notes are private to your account. Text is sent to Claude only when you choose to generate codes.</p>' : "");
     }
-    var keepEmail = d.querySelector("#auth-email") ? d.querySelector("#auth-email").value : "";
+    // Keep what was typed when the dialog redraws (busy spinner, error message).
+    var kept = {};
+    Array.prototype.forEach.call(d.querySelectorAll("input"), function (i) { kept[i.id] = i.value; });
+    var sameMode = d.getAttribute("data-mode") === m;
+    d.setAttribute("data-mode", m);
     d.innerHTML = '<div class="auth-card">' + html + "</div>";
-    if (keepEmail && d.querySelector("#auth-email")) d.querySelector("#auth-email").value = keepEmail;
+    Array.prototype.forEach.call(d.querySelectorAll("input"), function (i) {
+      if (kept[i.id] != null && (sameMode || i.id === "auth-email")) i.value = kept[i.id];
+    });
   }
 
-  function friendlyAuthError(e) {
+  function friendlyAuthError(e, kind) {
     var msg = (e && e.message) || "Something went wrong. Try again.";
+    if (kind === "email" && /already (been )?registered|already exists/i.test(msg)) return "Another account already uses that email address.";
+    if (/different from the old password|same.?password/i.test(msg)) return "Choose a new password that’s different from your current one.";
+    if (/unable to validate email|invalid format|email address .* is invalid/i.test(msg)) return "That doesn’t look like a valid email address.";
+    if (/reauthenticat/i.test(msg)) return "For your security, sign out and back in, then try again.";
     if (/invalid login credentials/i.test(msg)) return "That email and password don’t match an account.";
     if (/email not confirmed/i.test(msg)) return "Confirm your email first. Check your inbox for the link we sent.";
     if (/already registered|already exists/i.test(msg)) return "An account with this email already exists. Sign in instead.";
@@ -825,10 +912,46 @@
       account.busy = false; account.msg = msg; account.msgKind = kindOfMsg || "";
       renderAuth();
     };
+    var fullname = form.fullname ? form.fullname.value.trim().slice(0, 80) : "";
+    var me = account.user || {};
+    // Back to the account overview with a confirmation line.
+    var toOverview = function (msg, user) {
+      if (user) account.user = user;
+      account.busy = false; account.mode = "account"; account.msg = msg; account.msgKind = "ok";
+      renderAuth(); renderAccount(); renderSidebar();
+    };
+
+    // Checks that don't need the server.
+    if (kind === "email") {
+      var newEmail = form.newemail.value.trim();
+      if (newEmail.toLowerCase() === String(me.email || "").toLowerCase()) { done("That’s already your email address.", "bad"); return; }
+    }
+    if (kind === "password") {
+      if (password.length < 8) { done("Use a new password with at least 8 characters.", "bad"); return; }
+      if (password !== form.confirm.value) { done("The two new passwords don’t match.", "bad"); return; }
+      if (password === form.current.value) { done("Choose a new password that’s different from your current one.", "bad"); return; }
+    }
+
     account.busy = true; account.msg = null; renderAuth();
     var p;
     if (kind === "signin") p = auth.signInWithPassword({ email: email, password: password }).then(function (r) { if (r.error) throw r.error; account.busy = false; });
-    else if (kind === "signup") p = auth.signUp({ email: email, password: password, options: { emailRedirectTo: redirect } }).then(function (r) {
+    else if (kind === "name") p = auth.updateUser({ data: { full_name: fullname } }).then(function (r) {
+      if (r.error) throw r.error;
+      toOverview(fullname ? "Name saved." : "Name removed. Your email is shown instead.", r.data && r.data.user);
+    });
+    else if (kind === "email") p = auth.updateUser({ email: newEmail }, { emailRedirectTo: redirect }).then(function (r) {
+      if (r.error) throw r.error;
+      toOverview("Almost done. Click the link we sent to " + newEmail + " to confirm the change. If you also get an email at your current address, click that link too.", r.data && r.data.user);
+    });
+    else if (kind === "password") p = auth.signInWithPassword({ email: me.email, password: form.current.value }).then(function (r) {
+      // Confirm it's really them before changing the password.
+      if (r.error) throw new Error(/invalid login credentials/i.test(r.error.message) ? "Your current password isn’t right." : r.error.message);
+      return auth.updateUser({ password: password });
+    }).then(function (r) {
+      if (r.error) throw r.error;
+      toOverview("Password changed. Use your new password next time you sign in.", r.data && r.data.user);
+    });
+    else if (kind === "signup") p = auth.signUp({ email: email, password: password, options: fullname ? { emailRedirectTo: redirect, data: { full_name: fullname } } : { emailRedirectTo: redirect } }).then(function (r) {
       if (r.error) throw r.error;
       if (r.data && r.data.user && Array.isArray(r.data.user.identities) && !r.data.user.identities.length) throw new Error("already registered");
       if (!r.data.session) { account.mode = "signin"; done("Check your inbox at " + email + " and click the link to confirm your account. Then sign in here.", "ok"); }
@@ -842,8 +965,20 @@
       if (r.error) throw r.error;
       account.busy = false; closeAuth(); toast("Password updated");
     });
-    p.catch(function (err) { done(friendlyAuthError(err), "bad"); });
+    p.catch(function (err) { done(friendlyAuthError(err, kind), "bad"); });
   });
+
+  function sendResetLinkToMe() {
+    if (account.busy || !account.client || !account.user) return;
+    var email = account.user.email;
+    account.busy = true; account.msg = null; renderAuth();
+    account.client.auth.resetPasswordForEmail(email, { redirectTo: location.origin + "/app.html" }).then(function (r) {
+      if (r.error) throw r.error;
+      account.busy = false; account.msg = "We’ve sent a reset link to " + email + ". Open it to choose a new password."; account.msgKind = "ok"; renderAuth();
+    }).catch(function (err) {
+      account.busy = false; account.msg = friendlyAuthError(err); account.msgKind = "bad"; renderAuth();
+    });
+  }
 
   /* ---------- events ---------- */
   document.addEventListener("click", function (e) {
@@ -895,7 +1030,12 @@
     else if (a === "pane" && note) { ui.pane[note.id] = b.getAttribute("data-pane"); render(); }
     else if (a === "export") { exportCodebook(b.getAttribute("data-fmt")); }
     else if (a === "auth-open") { openAuth(b.getAttribute("data-mode") || "signin"); }
-    else if (a === "auth-mode") { setAuthMode(b.getAttribute("data-mode")); }
+    else if (a === "auth-mode") {
+      setAuthMode(b.getAttribute("data-mode"));
+      var firstField = $("#authDialog input");
+      if (firstField && /^acct-/.test(account.mode)) firstField.focus();
+    }
+    else if (a === "acct-reset-link") { sendResetLinkToMe(); }
     else if (a === "auth-close") { closeAuth(); }
     else if (a === "sign-out") { signOut(); }
   });
