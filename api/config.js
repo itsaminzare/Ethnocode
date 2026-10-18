@@ -41,22 +41,35 @@ export default function handler(req, res) {
 
   res.setHeader("Cache-Control", "no-store");
 
+  // Safe facts for troubleshooting the Vercel settings. Never includes a key's value.
+  const keySource = ["SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_PUBLISHABLE_KEY", "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"].find((n) => (env[n] || "").trim());
+  const looksLike = (v) => !v ? "empty" : /^sb_publishable_/.test(v) ? "publishable key" : /^sb_secret_/.test(v) ? "secret key (not sent)" : /^eyJ/.test(v) ? "JWT key" : /^https?:\/\//i.test(v) ? "a web address" : /\.supabase\.(co|in)/i.test(v) ? "a supabase address" : "something else, " + v.length + " characters";
+  const about = {
+    readsKeyFrom: keySource || "none",
+    keyLooksLike: looksLike(supabaseAnonKey),
+    urlLooksLike: looksLike(supabaseUrl),
+    vercelProject: env.VERCEL_PROJECT_PRODUCTION_URL || "unknown",
+    vercelEnvironment: env.VERCEL_ENV || "unknown",
+    deployedCommit: (env.VERCEL_GIT_COMMIT_SHA || "").slice(0, 7) || "unknown"
+  };
+  const send = (body) => res.status(200).json(body.accounts ? body : Object.assign(body, { about }));
+
   if (!supabaseUrl && !supabaseAnonKey) {
     res.status(200).json({ accounts: false });
     return;
   }
   if (isSecretKey(supabaseAnonKey) || isSecretKey(supabaseUrl)) {
-    res.status(200).json({ accounts: false, problem: "A Supabase SECRET key was found in the Vercel settings. It has not been sent. Use the publishable (anon) key for SUPABASE_ANON_KEY and revoke the secret key in Supabase." });
+    send({ accounts: false, problem: "A Supabase SECRET key was found in the Vercel settings. It has not been sent. Use the publishable (anon) key for SUPABASE_ANON_KEY and revoke the secret key in Supabase." });
     return;
   }
   const projectUrl = toProjectUrl(supabaseUrl);
   if (!projectUrl) {
     const shown = /^(sb_|eyJ)/.test(supabaseUrl) ? "a key" : JSON.stringify(supabaseUrl.slice(0, 80));
-    res.status(200).json({ accounts: false, problem: "SUPABASE_URL should be your project URL, like https://abcd1234.supabase.co. It currently contains " + shown + "." });
+    send({ accounts: false, problem: "SUPABASE_URL should be your project URL, like https://abcd1234.supabase.co. It currently contains " + shown + "." });
     return;
   }
   if (!/^(sb_publishable_|eyJ)/.test(supabaseAnonKey)) {
-    res.status(200).json({ accounts: false, problem: "SUPABASE_ANON_KEY should be the publishable key (sb_publishable_...) or the anon public key (eyJ...)" });
+    send({ accounts: false, problem: "SUPABASE_ANON_KEY should be the publishable key (sb_publishable_...) or the anon public key (eyJ...)" });
     return;
   }
   res.status(200).json({ accounts: true, supabaseUrl: projectUrl, supabaseAnonKey });
