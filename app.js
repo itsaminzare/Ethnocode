@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Mohammadamin Zare. All rights reserved. See LICENSE. */
 /* EthnoCode workspace. Plain JavaScript, no build step. */
 (function () {
   "use strict";
@@ -300,7 +301,8 @@
       '<div class="side-label">Field notes (' + state.notes.length + ")</div>" +
       '<ul class="note-list">' + items + "</ul>" +
       '<div class="side-foot">' + sideFootText() +
-      '<button type="button" class="btn btn-quiet btn-danger" data-action="reset">' + (ui.armed === "reset" ? "Click again to reset" : "Reset to sample notes") + "</button></div>";
+      '<button type="button" class="btn btn-quiet btn-danger" data-action="reset">' + (ui.armed === "reset" ? "Click again to reset" : "Reset to sample notes") + "</button>" +
+      '<p class="side-copy">© 2026 Mohammadamin Zare. All rights reserved.</p></div>';
   }
 
   function renderTabs() {

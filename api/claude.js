@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Mohammadamin Zare. All rights reserved. See LICENSE.
 // Vercel serverless function: forwards requests from the workspace to the Claude API.
 // The API key stays on the server (Vercel environment variable ANTHROPIC_API_KEY).
 

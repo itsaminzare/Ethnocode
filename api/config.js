@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Mohammadamin Zare. All rights reserved. See LICENSE.
 // Tells the workspace how to reach Supabase for accounts.
 // Only the project URL and the PUBLIC key (anon / publishable) may ever be sent to browsers.
 // The secret / service_role key bypasses all row-level security, so this endpoint refuses to
