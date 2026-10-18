@@ -20,7 +20,7 @@ function isSecretKey(key) {
 //   https://supabase.com/dashboard/project/abcd/settings/api        abcd (just the project ID)
 function toProjectUrl(value) {
   const v = value.trim().replace(/^["']|["']$/g, "");
-  let m = v.match(/^(?:https?:\/\/)?([a-z0-9-]+)\.supabase\.(co|in)(?:[\/?#].*)?$/i);
+  let m = v.match(/(?:^|[\s=:\/"'])([a-z0-9-]+)\.supabase\.(co|in)(?![a-z0-9.])/i);
   if (m) return "https://" + m[1].toLowerCase() + ".supabase." + m[2].toLowerCase();
   m = v.match(/supabase\.com\/dashboard\/project\/([a-z0-9-]+)/i);
   if (m) return "https://" + m[1].toLowerCase() + ".supabase.co";
@@ -32,7 +32,12 @@ export default function handler(req, res) {
   const env = process.env;
   const supabaseUrl = (env.SUPABASE_URL || env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
   // Clean up what copy-paste tends to add: spaces, quotes, invisible characters, "Bearer ".
-  const clean = (v) => String(v || "").replace(/[\u200B-\u200D\uFEFF\s]/g, "").replace(/^["'`]+|["'`]+$/g, "").replace(/^Bearer/i, "");
+  // If a whole "NAME=value" line from Supabase's Connect panel was pasted, keep only the key.
+  const clean = (v) => {
+    const t = String(v || "").replace(/[\u200B-\u200D\uFEFF\s]/g, "").replace(/^["'`]+|["'`]+$/g, "").replace(/^Bearer/i, "");
+    const m = t.match(/sb_(publishable|secret)_[A-Za-z0-9_-]+|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/);
+    return m ? m[0] : t;
+  };
   const supabaseAnonKey = clean(
     env.SUPABASE_ANON_KEY ||
     env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
