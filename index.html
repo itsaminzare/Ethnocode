@@ -202,7 +202,13 @@ mark.r{background:var(--rose)}
 .contact-topics li{display:flex;gap:12px;align-items:baseline}
 .contact-topics li::before{content:"";flex:none;width:8px;height:8px;border-radius:2px;background:var(--highlight);transform:translateY(-1px)}
 .contact-who{margin:22px 0 0;font-size:14.5px;color:var(--ink-soft)}
+.contact-links{list-style:none;margin:14px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:8px 22px}
+.contact-links a{color:var(--ink);font-weight:700;font-size:15px;text-decoration:underline;text-decoration-color:var(--light);text-decoration-thickness:2px;text-underline-offset:4px;transition:text-decoration-color .25s var(--ease)}
+.contact-links a:hover{text-decoration-color:var(--highlight)}
+.contact-links span{display:inline-block;transition:transform .25s var(--ease)}
+.contact-links a:hover span{transform:translate(2px,-2px)}
 @media (max-width:860px){.contact{grid-template-columns:1fr;align-items:start}}
+.contact-actions .btn{white-space:nowrap}
 @media (max-width:560px){.contact-actions .btn{flex:1 1 150px}}
 
 /* CTA + footer */
@@ -395,6 +401,10 @@ footer{background:var(--ink);color:#dccdf0;padding-block:56px max(40px,env(safe-
           <button class="btn btn-copy" type="button" id="copyEmail" data-email="mohammadamin.zare.25@ucl.ac.uk">Copy address</button>
         </div>
         <p class="contact-who">Mohammadamin Zare, creator of EthnoCode · University College London (UCL)</p>
+        <ul class="contact-links">
+          <li><a href="https://www.linkedin.com/in/mohammadaminzare" target="_blank" rel="noopener">Mohammadamin on LinkedIn <span aria-hidden="true">↗</span></a></li>
+          <li><a href="https://www.linkedin.com/company/ethnocode" target="_blank" rel="noopener">Follow EthnoCode on LinkedIn <span aria-hidden="true">↗</span></a></li>
+        </ul>
       </div>
     </div>
   </section>
@@ -420,7 +430,7 @@ footer{background:var(--ink);color:#dccdf0;padding-block:56px max(40px,env(safe-
           <li><a href="#about">About</a></li>
           <li><a href="#contact">Contact</a></li>
           <li><a href="mailto:mohammadamin.zare.25@ucl.ac.uk">mohammadamin.zare.25@<wbr>ucl.ac.uk</a></li>
-          <li><a href="https://www.linkedin.com/" target="_blank" rel="noopener">LinkedIn</a></li>
+          <li><a href="https://www.linkedin.com/company/ethnocode" target="_blank" rel="noopener">LinkedIn</a></li>
         </ul>
       </div>
     </div>
