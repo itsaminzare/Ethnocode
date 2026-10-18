@@ -439,9 +439,11 @@ footer{background:var(--ink);color:#dccdf0;padding-block:56px max(40px,env(safe-
     try{v.currentTime=0}catch(e){}
     old.classList.remove('top');v.classList.add('top');
     play(v);
-    requestAnimationFrame(function(){requestAnimationFrame(function(){v.classList.add('on')})});
+    void v.offsetWidth;          // apply the start state now, so the fade runs (rAF would stall in a background tab)
+    v.classList.add('on');
     front=vids.indexOf(v);
     setTimeout(function(){
+      v.classList.add('on');      // safety: the new clip must be visible before the old one is hidden
       old.classList.remove('on');old.pause();switching=false;
       var n=nextIdx(+v.dataset.k);
       if(n>=0)load(old,n);
