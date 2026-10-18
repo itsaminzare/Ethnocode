@@ -612,6 +612,7 @@
 
   function initAccounts() {
     fetch("/api/config").then(function (r) { return r.ok ? r.json() : null; }).then(function (cfg) {
+      if (cfg && cfg.problem && window.console) console.warn("EthnoCode accounts are off: " + cfg.problem);
       if (!cfg || !cfg.accounts) return;
       return loadScript(SUPABASE_JS).then(function () {
         account.client = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
