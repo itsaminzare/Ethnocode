@@ -47,9 +47,18 @@
   }
 
   /* ---------- state ---------- */
-  function load() {
+  var LAST_USER_KEY = "ethnocode.lastUser";
+  var account = { enabled: false, client: null, user: null, pendingUser: null, timer: null, dirty: false, syncedAt: null, busy: false, mode: null, msg: null, msgKind: null };
+  try { account.pendingUser = localStorage.getItem(LAST_USER_KEY); } catch (e) {}
+  function storeKey() {
+    if (account.user) return STORE_KEY + ":" + account.user.id;
+    if (account.pendingUser) return STORE_KEY + ":" + account.pendingUser;
+    return STORE_KEY;
+  }
+
+  function load(key) {
     try {
-      var raw = localStorage.getItem(STORE_KEY);
+      var raw = localStorage.getItem(key || STORE_KEY);
       if (!raw) return null;
       var d = JSON.parse(raw);
       if (!d || !Array.isArray(d.notes)) return null;
@@ -57,23 +66,39 @@
     } catch (e) { return null; }
   }
 
-  var state = load() || { notes: sampleNotes(), activeId: null, view: "notes", codebook: null, codebookStale: false };
-  if (!state.notes.length) state.notes = sampleNotes();
-  if (!state.notes.some(function (n) { return n.id === state.activeId; })) state.activeId = state.notes[0].id;
-  if (state.view !== "codebook") state.view = "notes";
+  function freshState() { return { notes: sampleNotes(), activeId: null, view: "notes", codebook: null, codebookStale: false }; }
+  function normalize(d) {
+    var st = d && Array.isArray(d.notes) ? d : freshState();
+    if (!st.notes.length) st.notes = sampleNotes();
+    if (!st.notes.some(function (n) { return n.id === st.activeId; })) st.activeId = st.notes[0].id;
+    if (st.view !== "codebook") st.view = "notes";
+    return st;
+  }
+  // A returning signed-in user sees their own saved copy straight away, while the account reconnects.
+  var state = normalize(load(storeKey()));
 
   var ui = { loading: {}, errors: {}, editing: {}, pane: {}, cbLoading: false, cbError: null, armed: null };
 
-  function save() {
+  function setStatus(kind) {
     var el = $("#saved");
-    try {
-      localStorage.setItem(STORE_KEY, JSON.stringify(state));
-      el.textContent = "Saved in this browser";
-      el.classList.remove("warn");
-    } catch (e) {
-      el.textContent = "Not saved: browser storage is blocked";
-      el.classList.add("warn");
-    }
+    var text = {
+      local: "Saved in this browser",
+      saving: "Saving to your account",
+      synced: "Saved to your account",
+      error: "Not synced yet, retrying",
+      blocked: "Not saved: browser storage is blocked"
+    }[kind];
+    el.textContent = text;
+    el.classList.toggle("warn", kind === "error" || kind === "blocked");
+    el.classList.toggle("busy", kind === "saving");
+  }
+
+  function save() {
+    state.savedAt = new Date().toISOString();
+    var stored = true;
+    try { localStorage.setItem(storeKey(), JSON.stringify(state)); } catch (e) { stored = false; }
+    if (account.user) { account.dirty = true; queueSync(); setStatus("saving"); }
+    else setStatus(stored ? "local" : "blocked");
   }
 
   function activeNote() {
@@ -274,7 +299,7 @@
       "</div>" +
       '<div class="side-label">Field notes (' + state.notes.length + ")</div>" +
       '<ul class="note-list">' + items + "</ul>" +
-      '<div class="side-foot"><span>Notes stay in this browser. Text is sent to Claude only when you generate codes.</span>' +
+      '<div class="side-foot">' + sideFootText() +
       '<button type="button" class="btn btn-quiet btn-danger" data-action="reset">' + (ui.armed === "reset" ? "Click again to reset" : "Reset to sample notes") + "</button></div>";
   }
 
@@ -565,6 +590,260 @@
     toast("Codebook exported");
   }
 
+
+  /* ---------- accounts (Supabase) ---------- */
+  var SUPABASE_JS = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js";
+
+  function sideFootText() {
+    if (account.user) return "<span>Saved to your account as <b>" + esc(account.user.email || "") + "</b>. Text is sent to Claude only when you generate codes.</span>";
+    if (account.enabled) return '<span>Notes are saved in this browser. <button type="button" class="link-btn" data-action="auth-open" data-mode="signup">Create a free account</button> to keep them across devices.</span>';
+    return "<span>Notes stay in this browser. Text is sent to Claude only when you generate codes.</span>";
+  }
+
+  function loadScript(src) {
+    return new Promise(function (resolve, reject) {
+      var s = document.createElement("script");
+      s.src = src; s.async = true;
+      s.onload = resolve;
+      s.onerror = function () { reject(new Error("Couldn't load the sign-in library")); };
+      document.head.appendChild(s);
+    });
+  }
+
+  function initAccounts() {
+    fetch("/api/config").then(function (r) { return r.ok ? r.json() : null; }).then(function (cfg) {
+      if (!cfg || !cfg.accounts) return;
+      return loadScript(SUPABASE_JS).then(function () {
+        account.client = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
+          auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+        });
+        account.enabled = true;
+        renderAccount(); renderSidebar();
+        account.client.auth.onAuthStateChange(function (event, session) {
+          // Run outside the callback: the library advises against awaiting its calls in here.
+          setTimeout(function () { handleAuth(event, session); }, 0);
+        });
+      });
+    }).catch(function () { /* accounts unavailable: the workspace keeps working locally */ });
+  }
+
+  function handleAuth(event, session) {
+    if (event === "PASSWORD_RECOVERY") { openAuth("reset"); }
+    var user = session && session.user;
+    if (!user && account.pendingUser) {
+      // The saved session has ended: go back to this browser's own notes.
+      account.pendingUser = null;
+      try { localStorage.removeItem(LAST_USER_KEY); } catch (e) {}
+      state = normalize(load(STORE_KEY)); lastKey = null; render(); setStatus("local");
+    }
+    if (user && (!account.user || account.user.id !== user.id)) onSignedIn(user);
+    else if (!user && account.user) onSignedOut();
+    else renderAccount();
+  }
+
+  function isUntouchedSample(n) {
+    return !n.codes && SAMPLES.some(function (s) { return s.title === n.title && s.text === n.text; });
+  }
+
+  function onSignedIn(user) {
+    var fromCache = account.pendingUser === user.id;
+    // Never mix another account's cached notes into this one.
+    var guest = (account.pendingUser && !fromCache) ? normalize(load(STORE_KEY)) : state;
+    account.pendingUser = null;
+    try { localStorage.setItem(LAST_USER_KEY, user.id); } catch (e) {}
+    account.user = user;
+    account.dirty = false;
+    setStatus("saving");
+    renderAccount();
+    account.client.from("workspaces").select("data, updated_at").eq("user_id", user.id).maybeSingle().then(function (res) {
+      if (res.error) throw res.error;
+      var remote = res.data && res.data.data && Array.isArray(res.data.data.notes) ? res.data.data : null;
+      var added = 0, merged, pushCache = false;
+      if (fromCache) {
+        // This browser's copy of the account. Keep whichever is newer; edits made offline get uploaded.
+        if (remote && !(guest.savedAt && guest.savedAt > res.data.updated_at)) merged = remote;
+        else { merged = guest; pushCache = true; }
+        if (remote) account.syncedAt = res.data.updated_at;
+      } else if (remote) {
+        merged = remote;
+        var ids = {};
+        merged.notes.forEach(function (n) { ids[n.id] = 1; });
+        guest.notes.forEach(function (n) {
+          if (!ids[n.id] && !isUntouchedSample(n)) { merged.notes.push(n); added++; }
+        });
+        account.syncedAt = res.data.updated_at;
+      } else {
+        merged = guest;
+      }
+      state = normalize(merged);
+      ui = { loading: {}, errors: {}, editing: {}, pane: {}, cbLoading: false, cbError: null, armed: null };
+      try { localStorage.setItem(storeKey(), JSON.stringify(state)); if (!fromCache) localStorage.removeItem(STORE_KEY); } catch (e) {}
+      lastKey = null;
+      render(); renderAccount();
+      if (!remote || added || pushCache) { account.dirty = true; pushNow(); } else setStatus("synced");
+      if (fromCache) return;
+      closeAuth();
+      toast(added ? plural(added, "note", "notes") + " from this browser added to your account" : remote ? "Welcome back. Your work is loaded." : "Signed in. Your work is now saved to your account.");
+    }).catch(function (e) {
+      setStatus("error");
+      toast("Couldn't load your saved work: " + (e.message || "unknown error"));
+    });
+  }
+
+  function onSignedOut() {
+    clearTimeout(account.timer);
+    account.user = null; account.pendingUser = null; account.dirty = false; account.syncedAt = null;
+    try { localStorage.removeItem(LAST_USER_KEY); } catch (e) {}
+    state = normalize(load(STORE_KEY));
+    ui = { loading: {}, errors: {}, editing: {}, pane: {}, cbLoading: false, cbError: null, armed: null };
+    lastKey = null;
+    render(); renderAccount(); setStatus("local");
+  }
+
+  function queueSync() {
+    clearTimeout(account.timer);
+    account.timer = setTimeout(pushNow, 1200);
+  }
+
+  function pushNow() {
+    if (!account.user || !account.client) return;
+    var stamp = new Date().toISOString();
+    var uidNow = account.user.id;
+    account.client.from("workspaces").upsert({ user_id: uidNow, data: state, updated_at: stamp }).then(function (res) {
+      if (!account.user || account.user.id !== uidNow) return;
+      if (res.error) { setStatus("error"); clearTimeout(account.timer); account.timer = setTimeout(pushNow, 5000); return; }
+      account.dirty = false; account.syncedAt = stamp; setStatus("synced");
+    }, function () { setStatus("error"); account.timer = setTimeout(pushNow, 5000); });
+  }
+
+  // Pick up changes made on another device when this tab comes back into focus.
+  window.addEventListener("focus", function () {
+    if (!account.user || account.dirty) return;
+    account.client.from("workspaces").select("data, updated_at").eq("user_id", account.user.id).maybeSingle().then(function (res) {
+      if (res.error || !res.data || !res.data.data || account.dirty) return;
+      if (account.syncedAt && res.data.updated_at <= account.syncedAt) return;
+      account.syncedAt = res.data.updated_at;
+      state = normalize(res.data.data);
+      try { localStorage.setItem(storeKey(), JSON.stringify(state)); } catch (e) {}
+      render(); toast("Updated with changes from another device");
+    });
+  });
+
+  function signOut() {
+    if (!account.client) return;
+    var finish = function () { closeAuth(); onSignedOut(); toast("Signed out"); };
+    if (account.dirty) pushNow();
+    account.client.auth.signOut().then(finish, finish);
+  }
+
+  function renderAccount() {
+    var box = $("#account");
+    if (!box) return;
+    if (!account.enabled) { box.innerHTML = ""; return; }
+    if (account.user) {
+      var email = account.user.email || "";
+      box.innerHTML = '<button type="button" class="acct-btn" data-action="auth-open" data-mode="account" aria-label="Account: ' + esc(email) + '"><span class="avatar">' + esc((email[0] || "?").toUpperCase()) + '</span><span class="acct-email">' + esc(email) + "</span></button>";
+    } else {
+      box.innerHTML = '<button type="button" class="btn btn-signin" data-action="auth-open" data-mode="signin">Sign in</button>';
+    }
+  }
+
+  /* auth dialog */
+  function openAuth(mode) {
+    var d = $("#authDialog");
+    if (!d || !account.enabled) return;
+    account.msg = null; account.msgKind = null;
+    setAuthMode(mode);
+    if (!d.open) { if (d.showModal) d.showModal(); else d.setAttribute("open", ""); }
+    var first = d.querySelector("input");
+    if (first) first.focus();
+  }
+  function closeAuth() { var d = $("#authDialog"); if (d && d.open) { if (d.close) d.close(); else d.removeAttribute("open"); } }
+  function setAuthMode(mode) { account.mode = mode; account.msg = null; account.msgKind = null; renderAuth(); }
+
+  function authMessage() {
+    return account.msg ? '<p class="auth-msg ' + (account.msgKind || "") + '" role="status">' + esc(account.msg) + "</p>" : "";
+  }
+
+  function renderAuth() {
+    var d = $("#authDialog"); if (!d) return;
+    var m = account.mode, html;
+    var close = '<button type="button" class="auth-x" data-action="auth-close" aria-label="Close">' + ICON_X + "</button>";
+    var busy = account.busy ? " disabled" : "";
+    if (m === "account") {
+      html = close + '<h2 id="auth-title">Your account</h2>' +
+        '<p class="auth-lead">Signed in as <b>' + esc(account.user ? account.user.email : "") + "</b>. Your notes and codebook are saved to your account and sync across your devices.</p>" +
+        '<div class="auth-actions"><button type="button" class="btn btn-line" data-action="auth-close">Close</button><button type="button" class="btn btn-dark" data-action="sign-out">Sign out</button></div>';
+    } else if (m === "forgot") {
+      html = close + '<h2 id="auth-title">Reset your password</h2><p class="auth-lead">Enter your email and we’ll send you a link to choose a new password.</p>' + authMessage() +
+        '<form data-auth="forgot"><label for="auth-email">Email</label><input id="auth-email" name="email" type="email" autocomplete="email" required>' +
+        '<button type="submit" class="btn btn-primary auth-submit"' + busy + ">Send reset link</button></form>" +
+        '<p class="auth-switch"><button type="button" class="link-btn" data-action="auth-mode" data-mode="signin">Back to sign in</button></p>';
+    } else if (m === "reset") {
+      html = close + '<h2 id="auth-title">Choose a new password</h2>' + authMessage() +
+        '<form data-auth="reset"><label for="auth-password">New password</label><input id="auth-password" name="password" type="password" autocomplete="new-password" minlength="8" required>' +
+        '<p class="auth-hint">At least 8 characters.</p><button type="submit" class="btn btn-primary auth-submit"' + busy + ">Save new password</button></form>";
+    } else {
+      var up = m === "signup";
+      html = close + '<h2 id="auth-title">' + (up ? "Create your account" : "Sign in") + "</h2>" +
+        '<p class="auth-lead">' + (up ? "Save your notes and codebook to your account and pick up where you left off on any device." : "Welcome back. Sign in to load your saved notes.") + "</p>" +
+        '<div class="auth-tabs" role="tablist"><button type="button" role="tab" data-action="auth-mode" data-mode="signin" aria-selected="' + !up + '">Sign in</button><button type="button" role="tab" data-action="auth-mode" data-mode="signup" aria-selected="' + up + '">Create account</button></div>' +
+        authMessage() +
+        '<form data-auth="' + m + '"><label for="auth-email">Email</label><input id="auth-email" name="email" type="email" autocomplete="email" required>' +
+        '<label for="auth-password">Password</label><input id="auth-password" name="password" type="password" autocomplete="' + (up ? "new-password" : "current-password") + '" minlength="' + (up ? 8 : 1) + '" required>' +
+        (up ? '<p class="auth-hint">At least 8 characters.</p>' : '<p class="auth-hint"><button type="button" class="link-btn" data-action="auth-mode" data-mode="forgot">Forgot your password?</button></p>') +
+        '<button type="submit" class="btn btn-primary auth-submit"' + busy + ">" + (account.busy ? '<span class="spinner" aria-hidden="true"></span>' : "") + (up ? "Create account" : "Sign in") + "</button></form>" +
+        (up ? '<p class="auth-fine">Your notes are private to your account. Text is sent to Claude only when you choose to generate codes.</p>' : "");
+    }
+    var keepEmail = d.querySelector("#auth-email") ? d.querySelector("#auth-email").value : "";
+    d.innerHTML = '<div class="auth-card">' + html + "</div>";
+    if (keepEmail && d.querySelector("#auth-email")) d.querySelector("#auth-email").value = keepEmail;
+  }
+
+  function friendlyAuthError(e) {
+    var msg = (e && e.message) || "Something went wrong. Try again.";
+    if (/invalid login credentials/i.test(msg)) return "That email and password don’t match an account.";
+    if (/email not confirmed/i.test(msg)) return "Confirm your email first. Check your inbox for the link we sent.";
+    if (/already registered|already exists/i.test(msg)) return "An account with this email already exists. Sign in instead.";
+    if (/password should be at least/i.test(msg)) return "Use a password with at least 8 characters.";
+    if (/rate limit|too many/i.test(msg)) return "Too many attempts. Wait a minute and try again.";
+    return msg;
+  }
+
+  document.addEventListener("submit", function (e) {
+    var form = e.target.closest && e.target.closest("form[data-auth]");
+    if (!form) return;
+    e.preventDefault();
+    if (account.busy || !account.client) return;
+    var kind = form.getAttribute("data-auth");
+    var email = form.email ? form.email.value.trim() : "";
+    var password = form.password ? form.password.value : "";
+    var auth = account.client.auth;
+    var redirect = location.origin + "/app.html";
+    var done = function (msg, kindOfMsg) {
+      account.busy = false; account.msg = msg; account.msgKind = kindOfMsg || "";
+      renderAuth();
+    };
+    account.busy = true; account.msg = null; renderAuth();
+    var p;
+    if (kind === "signin") p = auth.signInWithPassword({ email: email, password: password }).then(function (r) { if (r.error) throw r.error; account.busy = false; });
+    else if (kind === "signup") p = auth.signUp({ email: email, password: password, options: { emailRedirectTo: redirect } }).then(function (r) {
+      if (r.error) throw r.error;
+      if (r.data && r.data.user && Array.isArray(r.data.user.identities) && !r.data.user.identities.length) throw new Error("already registered");
+      if (!r.data.session) { account.mode = "signin"; done("Check your inbox at " + email + " and click the link to confirm your account. Then sign in here.", "ok"); }
+      else account.busy = false;
+    });
+    else if (kind === "forgot") p = auth.resetPasswordForEmail(email, { redirectTo: redirect }).then(function (r) {
+      if (r.error) throw r.error;
+      done("If an account exists for " + email + ", we’ve sent a link to reset your password.", "ok");
+    });
+    else if (kind === "reset") p = auth.updateUser({ password: password }).then(function (r) {
+      if (r.error) throw r.error;
+      account.busy = false; closeAuth(); toast("Password updated");
+    });
+    p.catch(function (err) { done(friendlyAuthError(err), "bad"); });
+  });
+
   /* ---------- events ---------- */
   document.addEventListener("click", function (e) {
     var mk = e.target.closest("mark.hl");
@@ -614,6 +893,10 @@
     else if (a === "build") { buildCodebook(); }
     else if (a === "pane" && note) { ui.pane[note.id] = b.getAttribute("data-pane"); render(); }
     else if (a === "export") { exportCodebook(b.getAttribute("data-fmt")); }
+    else if (a === "auth-open") { openAuth(b.getAttribute("data-mode") || "signin"); }
+    else if (a === "auth-mode") { setAuthMode(b.getAttribute("data-mode")); }
+    else if (a === "auth-close") { closeAuth(); }
+    else if (a === "sign-out") { signOut(); }
   });
 
   document.addEventListener("input", function (e) {
@@ -636,7 +919,7 @@
   $("#fileInput").addEventListener("change", function (e) { importFiles(e.target.files); });
 
   window.addEventListener("storage", function (e) {
-    if (e.key === STORE_KEY && e.newValue) { var d = load(); if (d) { state = d; render(); } }
+    if (e.key === storeKey() && e.newValue) { var d = load(storeKey()); if (d) { state = normalize(d); render(); } }
   });
 
   if (document.documentElement.classList.contains("vt-fallback") && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
@@ -654,4 +937,5 @@
 
   render();
   save();
+  initAccounts();
 })();

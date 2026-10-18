@@ -1,6 +1,7 @@
 {
   "framework": null,
   "functions": {
-    "api/claude.js": { "maxDuration": 60 }
+    "api/claude.js": { "maxDuration": 60 },
+    "api/config.js": { "maxDuration": 10 }
   }
 }

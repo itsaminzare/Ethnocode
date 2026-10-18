@@ -20,6 +20,7 @@
   </nav>
   <div class="top-right">
     <span class="saved" id="saved">Saved in this browser</span>
+    <div id="account" class="account"></div>
   </div>
 </header>
 
@@ -28,6 +29,7 @@
   <main class="main" id="main" tabindex="-1"></main>
 </div>
 
+<dialog class="auth" id="authDialog" aria-labelledby="auth-title"></dialog>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <input type="file" id="fileInput" accept=".txt,.md,.docx" multiple hidden>
 <script src="app.js"></script>
