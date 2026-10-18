@@ -57,6 +57,18 @@ A **Sign in** button now appears in the workspace's top bar.
 - **Signing out:** the workspace goes back to the sample notes, so nothing is left behind
   on a shared computer.
 
+## Account settings
+
+Clicking your name or avatar in the top bar opens **Your account**:
+
+- **Name:** optional, can also be given at sign-up. It's shown in the top bar instead of the email.
+- **Email:** enter a new address and Supabase emails a confirmation link to it. The change happens
+  once the link is clicked. With **Secure email change** on (the default, under
+  **Authentication** → **Sign In / Providers** → **Email**), a link also goes to the current
+  address and both must be clicked. The workspace explains this when the first link is clicked.
+- **Password:** enter the current password, then the new one twice. If the current password is
+  forgotten, **Email me a reset link** sends a reset email to the account's address.
+
 ## Good to know
 
 - Supabase's built-in email service is meant for testing and only sends a few emails per
