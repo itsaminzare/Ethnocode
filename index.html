@@ -84,11 +84,14 @@ img,video{max-width:100%;display:block}
 .menu .menu-foot{padding-block:28px;color:#cbb7e6;font-size:15px;display:flex;flex-wrap:wrap;gap:8px 32px;border-top:1px solid #523477}
 
 /* Hero */
-.hero{position:relative;min-height:100vh;min-height:100svh;display:flex;align-items:flex-end;color:#fff;background:#361a54 radial-gradient(120% 80% at 70% 20%,#5a2f8a 0%,#361a54 70%);overflow:hidden}
-.hero video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 1.2s ease}
+.hero{position:relative;min-height:100vh;min-height:100svh;display:flex;align-items:flex-end;color:#fff;background:#361a54 url(hero-1-poster.jpg) center/cover no-repeat;overflow:hidden}
+@media (max-width:760px){.hero{background-image:url(hero-1-poster-m.jpg)}}
+/* The incoming clip fades in on top while the outgoing one stays fully visible underneath, so the backdrop never shows between clips. */
+.hero video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;z-index:0;transition:opacity 1.2s cubic-bezier(.45,0,.55,1)}
 .hero video.on{opacity:1}
-.hero::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(54,26,84,.5) 0%,rgba(54,26,84,0) 28%,rgba(54,26,84,.2) 55%,rgba(54,26,84,.88) 100%);pointer-events:none}
-.hero-in{position:relative;z-index:2;width:100%;padding-bottom:max(56px,env(safe-area-inset-bottom,0px))}
+.hero video.top{z-index:1}
+.hero::after{content:"";position:absolute;inset:0;z-index:2;background:linear-gradient(180deg,rgba(54,26,84,.5) 0%,rgba(54,26,84,0) 28%,rgba(54,26,84,.2) 55%,rgba(54,26,84,.88) 100%);pointer-events:none}
+.hero-in{position:relative;z-index:3;width:100%;padding-bottom:max(56px,env(safe-area-inset-bottom,0px))}
 .hero h1{margin:0;font:850 clamp(48px,12.6vw,204px)/.88 var(--sans);font-stretch:118%;letter-spacing:-.05em;margin-left:-.04em}
 @media (max-width:560px){.hero h1{font-size:clamp(44px,15vw,80px);font-stretch:100%}.hero-actions{width:100%}.hero-actions .btn{flex:1 1 140px}.vid-ctrl{margin-top:4px}.menu ol a{padding-block:4px}}
 .hero .by{margin:clamp(10px,1.4vw,20px) 0 0;font:600 clamp(22px,3.1vw,44px)/1.1 var(--sans);font-stretch:112%;letter-spacing:-.02em}
@@ -397,51 +400,93 @@ footer{background:var(--ink);color:#dccdf0;padding-block:56px max(40px,env(safe-
   }
 })();
 (function(){
-  // Hero video: crossfades through hero-1.mp4 to hero-4.mp4 placed next to this page.
-  // Any clip that is missing is skipped. With none present, the dark backdrop shows.
-  var small=window.matchMedia('(max-width: 760px)').matches||(navigator.connection&&navigator.connection.saveData);
+  // Hero video: plays hero-1 to hero-4 (placed next to this page) in a loop.
+  // Each clip starts just before the previous one ends and fades in on top of it, so there is never a gap.
+  // Sizes: -m (1080x1920 portrait) on phones, -hd (1440p) on large or high-density screens, plain (1080p) otherwise.
+  // A missing size falls back to the plain file; a missing clip is skipped.
+  var FADE=1.2;
+  var small=window.matchMedia('(max-width: 760px)').matches;
+  var saveData=!!(navigator.connection&&navigator.connection.saveData);
+  var dpr=window.devicePixelRatio||1;
+  var big=!small&&!saveData&&Math.max(window.innerWidth,(screen&&screen.width)||0)*dpr>=2200;
+  var sizes=small?['-m','']:big?['-hd','']:[''];
   var clips=['hero-1','hero-2','hero-3','hero-4'];
   var vids=[document.getElementById('vA'),document.getElementById('vB')];
   var ctrl=document.getElementById('vidCtrl');
   var reduce=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var ok=clips.map(function(){return true});
-  var cur=0,idx=0,paused=reduce,started=false;
+  var front=0,paused=reduce,started=false,switching=false,waiting=false;
   function nextIdx(from){
     for(var n=1;n<=clips.length;n++){var k=(from+n)%clips.length;if(ok[k])return k}
     return -1;
   }
-  function load(v,k,full){v.dataset.k=k;v.dataset.full=full||!small?'1':'';v.src=clips[k]+(v.dataset.full?'.mp4':'-m.mp4');v.load()}
-  function show(v){
-    vids.forEach(function(x){x.classList.toggle('on',x===v)});
-    if(!paused){var p=v.play();if(p&&p.catch)p.catch(function(){})}
+  function load(v,k,level){
+    level=level||0;
+    v.dataset.k=k;v.dataset.level=level;
+    v.src=clips[k]+sizes[level]+'.mp4';v.load();
+  }
+  function play(v){if(paused)return;var p=v.play();if(p&&p.catch)p.catch(function(){})}
+  function ready(v){return v.readyState>=3}
+  function first(v){
+    started=true;front=vids.indexOf(v);
+    v.classList.add('top','on');play(v);
+  }
+  // Fade the waiting clip in over the current one.
+  function bringIn(v){
+    var old=vids[front];
+    if(v===old||switching)return;
+    switching=true;waiting=false;
+    try{v.currentTime=0}catch(e){}
+    old.classList.remove('top');v.classList.add('top');
+    play(v);
+    requestAnimationFrame(function(){requestAnimationFrame(function(){v.classList.add('on')})});
+    front=vids.indexOf(v);
+    setTimeout(function(){
+      old.classList.remove('on');old.pause();switching=false;
+      var n=nextIdx(+v.dataset.k);
+      if(n>=0)load(old,n);
+    },FADE*1000+150);
+  }
+  function advance(){
+    if(switching||waiting)return;
+    var cur=vids[front],other=vids[1-front];
+    var k=+other.dataset.k;
+    if(!ok[k]||k===+cur.dataset.k)return;   // only one clip available: it simply loops
+    if(ready(other)){bringIn(other);return}
+    waiting=true;
+    other.addEventListener('canplay',function once(){other.removeEventListener('canplay',once);waiting=false;if(vids[1-front]===other)bringIn(other)});
   }
   vids.forEach(function(v){
     v.addEventListener('error',function(){
-      var k=+v.dataset.k;
-      if(!v.dataset.full){load(v,k,true);return}
+      var k=+v.dataset.k,level=+v.dataset.level;
+      if(level+1<sizes.length){load(v,k,level+1);return}
       ok[k]=false;
-      var n=nextIdx(k); if(n<0)return;
-      if(v===vids[cur]){idx=n;load(v,n);v.addEventListener('canplay',function once(){v.removeEventListener('canplay',once);show(v)})}
-      else if(n!==idx){load(v,n)}
+      var n=nextIdx(k);if(n<0)return;
+      var otherK=+vids[1-vids.indexOf(v)].dataset.k;
+      if(!started||n!==otherK)load(v,n);
     });
-    v.addEventListener('canplay',function(){if(!started&&v===vids[cur]){started=true;show(v)}});
+    v.addEventListener('canplay',function(){if(!started&&v===vids[0])first(v)});
+    v.addEventListener('timeupdate',function(){
+      if(v===vids[front]&&!paused&&v.duration&&v.duration-v.currentTime<=FADE+0.2)advance();
+    });
     v.addEventListener('ended',function(){
-      if(v!==vids[cur])return;
-      var other=vids[1-cur];
-      if(+other.dataset.k===idx||!ok[+other.dataset.k]){v.currentTime=0;show(v);return}
-      cur=1-cur;idx=+other.dataset.k;if(other.ended||other.currentTime>0)other.currentTime=0;show(other);
-      var n=nextIdx(idx); if(n>=0)setTimeout(function(){load(v,n)},1300);
+      if(v!==vids[front]||switching)return;
+      var other=vids[1-front];
+      if(!ok[+other.dataset.k]||+other.dataset.k===+v.dataset.k){v.currentTime=0;play(v);return}
+      advance();   // the last frame stays on screen until the next clip is ready
     });
   });
+  // If the first clip can't load at all, start with whichever loads first.
+  vids[1].addEventListener('canplay',function(){if(!started&&!ok[0])first(vids[1])});
   load(vids[0],0);load(vids[1],1);
   function setPaused(p){
-    paused=p;var v=vids[cur];
-    if(p)v.pause();else show(v);
+    paused=p;
+    if(p)vids.forEach(function(v){v.pause()});else play(vids[front]);
     ctrl.setAttribute('aria-pressed',String(p));
     ctrl.querySelector('span').textContent=p?'Play video':'Pause video';
     ctrl.querySelector('svg').innerHTML=p?'<path d="M3 1.5l9 5.5-9 5.5z" fill="currentColor"/>':'<rect x="2" y="1" width="3.5" height="12" fill="currentColor"/><rect x="8.5" y="1" width="3.5" height="12" fill="currentColor"/>';
   }
-  if(reduce){setPaused(true);vids[0].classList.add('on')}
+  if(reduce)setPaused(true);
   ctrl.addEventListener('click',function(){setPaused(!paused)});
 
   // Top bar turns solid after the hero
